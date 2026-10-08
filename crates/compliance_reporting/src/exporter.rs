@@ -6,13 +6,23 @@
 //! not altered in transit. Signing provides integrity and attribution; it is
 //! not access control.
 
+use std::path::{Path, PathBuf};
+
 use crate::{ComplianceError, ConnectionRecord};
-use ed25519_dalek::{Signature, Signer};
+use ed25519_dalek::{Signature, Signer, Verifier};
 use serde::{Deserialize, Serialize};
 
-// Re-exported so downstream crates (e.g. the Tauri backend) can name the
-// signing key type without taking a direct dependency on ed25519-dalek.
-pub use ed25519_dalek::SigningKey;
+// Re-exported so downstream crates (e.g. the Tauri backend) can name the key
+// types without taking a direct dependency on ed25519-dalek.
+pub use ed25519_dalek::{SigningKey, VerifyingKey};
+
+/// Generate a fresh Ed25519 signing key from the OS CSPRNG.
+///
+/// A real deployment loads a persisted operator key from secure storage; this
+/// helper is for first-run/bootstrap and tests.
+pub fn generate_signing_key() -> SigningKey {
+    SigningKey::generate(&mut rand::rngs::OsRng)
+}
 
 /// Output format for an export bundle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,6 +66,37 @@ pub fn export_signed(
     })
 }
 
+/// Verify a signed export against a public key. Returns `true` when the
+/// signature covers `payload` exactly.
+pub fn verify(export: &SignedExport, vk: &VerifyingKey) -> bool {
+    let bytes = match hex_decode(&export.signature_hex) {
+        Some(b) if b.len() == 64 => b,
+        _ => return false,
+    };
+    let mut arr = [0u8; 64];
+    arr.copy_from_slice(&bytes);
+    let sig = Signature::from_bytes(&arr);
+    vk.verify(&export.payload, &sig).is_ok()
+}
+
+/// Write a signed export to `dir`, producing `<stem>.<format>` for the payload
+/// and `<stem>.<format>.sig` for the detached hex signature. Returns the
+/// payload path.
+pub fn write_to_dir(
+    export: &SignedExport,
+    dir: &Path,
+    stem: &str,
+) -> Result<PathBuf, ComplianceError> {
+    std::fs::create_dir_all(dir).map_err(|e| ComplianceError::Export(e.to_string()))?;
+    let payload_path = dir.join(format!("{stem}.{}", export.format));
+    let sig_path = dir.join(format!("{stem}.{}.sig", export.format));
+    std::fs::write(&payload_path, &export.payload)
+        .map_err(|e| ComplianceError::Export(e.to_string()))?;
+    std::fs::write(&sig_path, export.signature_hex.as_bytes())
+        .map_err(|e| ComplianceError::Export(e.to_string()))?;
+    Ok(payload_path)
+}
+
 fn to_csv(records: &[ConnectionRecord]) -> Result<Vec<u8>, ComplianceError> {
     let mut wtr = csv::Writer::from_writer(Vec::new());
     wtr.write_record(["node_id_hex", "observed_addr", "ts_unix_micros", "bytes", "session_key_id"])
@@ -82,10 +123,19 @@ fn hex_encode(bytes: &[u8]) -> String {
     s
 }
 
+fn hex_decode(s: &str) -> Option<Vec<u8>> {
+    if s.len() % 2 != 0 {
+        return None;
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ed25519_dalek::{Verifier, VerifyingKey};
 
     fn sample() -> Vec<ConnectionRecord> {
         vec![ConnectionRecord {
@@ -100,17 +150,24 @@ mod tests {
     #[test]
     fn signed_json_verifies() {
         let key = SigningKey::from_bytes(&[42u8; 32]);
-        let vk: VerifyingKey = key.verifying_key();
         let export = export_signed(&sample(), Format::Json, &key).unwrap();
         assert_eq!(export.format, "json");
-        let sig_bytes: [u8; 64] = {
-            let raw = (0..64)
-                .map(|i| u8::from_str_radix(&export.signature_hex[i * 2..i * 2 + 2], 16).unwrap())
-                .collect::<Vec<_>>();
-            raw.try_into().unwrap()
-        };
-        let sig = Signature::from_bytes(&sig_bytes);
-        assert!(vk.verify(&export.payload, &sig).is_ok());
+        assert!(verify(&export, &key.verifying_key()));
+    }
+
+    #[test]
+    fn tampered_payload_fails_verify() {
+        let key = SigningKey::from_bytes(&[7u8; 32]);
+        let mut export = export_signed(&sample(), Format::Json, &key).unwrap();
+        export.payload.push(b'!'); // tamper
+        assert!(!verify(&export, &key.verifying_key()));
+    }
+
+    #[test]
+    fn generated_key_round_trips() {
+        let key = generate_signing_key();
+        let export = export_signed(&sample(), Format::Csv, &key).unwrap();
+        assert!(verify(&export, &key.verifying_key()));
     }
 
     #[test]

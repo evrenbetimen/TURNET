@@ -30,6 +30,11 @@ pub enum NodeState {
 }
 
 /// Controls the local node's run state. Scope: this node only.
+///
+/// Transitions: `Running ⇄ Paused`, and either may go to `Stopped`. `Stopped`
+/// is terminal — a stopped node is restarted by launching the daemon again,
+/// not by a transition here. `pause`/`resume` are idempotent within their
+/// state.
 pub struct LocalNodeControl {
     state: NodeState,
 }
@@ -46,18 +51,54 @@ impl LocalNodeControl {
         self.state
     }
 
-    /// Pause the local node.
-    ///
-    /// Stub: records intent only; draining/teardown is wired to the relay
-    /// engine in a later milestone.
-    pub fn pause(&mut self) -> Result<(), ComplianceError> {
-        self.state = NodeState::Paused;
-        Err(ComplianceError::NotImplemented("local node pause drain"))
+    /// Pause the local node (stop accepting new sessions; existing ones drain).
+    /// Idempotent when already paused; rejected once stopped.
+    pub fn pause(&mut self) -> Result<NodeState, ComplianceError> {
+        match self.state {
+            NodeState::Running | NodeState::Paused => {
+                self.state = NodeState::Paused;
+                Ok(self.state)
+            }
+            NodeState::Stopped => Err(ComplianceError::InvalidTransition("cannot pause a stopped node")),
+        }
     }
 
-    /// Stop the local node.
-    pub fn stop(&mut self) -> Result<(), ComplianceError> {
+    /// Resume a paused node. Idempotent when already running; rejected once stopped.
+    pub fn resume(&mut self) -> Result<NodeState, ComplianceError> {
+        match self.state {
+            NodeState::Running | NodeState::Paused => {
+                self.state = NodeState::Running;
+                Ok(self.state)
+            }
+            NodeState::Stopped => Err(ComplianceError::InvalidTransition("cannot resume a stopped node")),
+        }
+    }
+
+    /// Stop the local node. Terminal.
+    pub fn stop(&mut self) -> Result<NodeState, ComplianceError> {
         self.state = NodeState::Stopped;
-        Err(ComplianceError::NotImplemented("local node stop"))
+        Ok(self.state)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pause_resume_cycle() {
+        let mut c = LocalNodeControl::default();
+        assert_eq!(c.state(), NodeState::Running);
+        assert_eq!(c.pause().unwrap(), NodeState::Paused);
+        assert_eq!(c.pause().unwrap(), NodeState::Paused); // idempotent
+        assert_eq!(c.resume().unwrap(), NodeState::Running);
+    }
+
+    #[test]
+    fn stop_is_terminal() {
+        let mut c = LocalNodeControl::default();
+        assert_eq!(c.stop().unwrap(), NodeState::Stopped);
+        assert!(c.pause().is_err());
+        assert!(c.resume().is_err());
     }
 }

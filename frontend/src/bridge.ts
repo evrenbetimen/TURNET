@@ -24,7 +24,20 @@ export interface ExportSummary {
   format: string;
   record_count: number;
   signature_prefix: string;
+  verified: boolean;
+  output_path: string;
   note: string;
+}
+
+export interface AuditPolicy {
+  recording: boolean;
+  disclosure: string | null;
+}
+
+export type NodeRunState = "running" | "paused" | "stopped";
+
+export interface NodeStateResult {
+  state: NodeRunState;
 }
 
 export interface TelemetrySnapshot {
@@ -58,6 +71,26 @@ export const api = {
 
   exportComplianceReport(format: "json" | "csv"): Promise<ExportSummary> {
     return invoke<ExportSummary>("export_compliance_report", { format });
+  },
+
+  getNodeState(): Promise<NodeStateResult> {
+    return invoke<NodeStateResult>("get_node_state");
+  },
+
+  setNodeState(action: "pause" | "resume" | "stop"): Promise<NodeStateResult> {
+    return invoke<NodeStateResult>("set_node_state", { action });
+  },
+
+  getAuditPolicy(): Promise<AuditPolicy> {
+    return invoke<AuditPolicy>("get_audit_policy");
+  },
+
+  setAuditPolicy(enabled: boolean, disclosure: string | null): Promise<AuditPolicy> {
+    return invoke<AuditPolicy>("set_audit_policy", { enabled, disclosure });
+  },
+
+  getHoneypotFlags(): Promise<number> {
+    return invoke<number>("get_honeypot_flags");
   },
 };
 

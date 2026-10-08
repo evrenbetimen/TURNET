@@ -34,6 +34,11 @@ pub fn run() {
             commands::set_proxy_running,
             commands::classify_domain,
             commands::get_credit_balance,
+            commands::get_node_state,
+            commands::set_node_state,
+            commands::get_audit_policy,
+            commands::set_audit_policy,
+            commands::get_honeypot_flags,
             commands::export_compliance_report,
         ])
         .setup(|app| {
