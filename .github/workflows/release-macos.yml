@@ -1,0 +1,80 @@
+name: Release (macOS)
+
+# Builds the Turnet Console as a macOS release bundle (.app + .dmg) on a
+# GitHub-hosted macOS runner and publishes it to a GitHub Release.
+#
+# A macOS app bundle can only be produced on macOS, so this runs on
+# `macos-latest` rather than in the Linux dev container.
+#
+# Triggers:
+#   - pushing a tag like `v0.1.0`  -> builds and attaches to that release
+#   - manual "Run workflow"        -> builds a draft release for the given tag
+#
+# The build is UNSIGNED unless Apple signing secrets are provided (see the
+# commented env block below). An unsigned app will warn under Gatekeeper on
+# first launch (right-click > Open, or `xattr -dr com.apple.quarantine`).
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to create (e.g. v0.1.0)"
+        required: true
+        default: "v0.1.0"
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Set up Rust (with both macOS targets)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install frontend dependencies
+        run: npm --prefix frontend ci
+
+      - name: Build macOS release bundle
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # --- optional Apple code signing / notarization ---
+          # Provide these as repository secrets to ship a signed, notarized
+          # build; leave unset for an unsigned bundle.
+          # APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          # APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          # APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # APPLE_ID: ${{ secrets.APPLE_ID }}
+          # APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          # Universal binary runs on both Apple Silicon and Intel Macs.
+          args: --target universal-apple-darwin
+          tagName: ${{ github.event.inputs.tag || github.ref_name }}
+          releaseName: "Turnet Console ${{ github.event.inputs.tag || github.ref_name }}"
+          releaseBody: "Automated macOS release build of the Turnet Console (unsigned unless signing secrets are configured)."
+          releaseDraft: true
+          prerelease: false
