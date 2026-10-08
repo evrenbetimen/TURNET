@@ -1,0 +1,82 @@
+# Turnet — Trusted Universal Relay Network
+# Root Cargo workspace. All core daemon crates and the Tauri backend are
+# members here so they share one lockfile and one dependency resolution pass.
+#
+# NOTE ON VERSIONS: the pins below are recent, widely-used releases chosen as
+# sensible defaults for a scaffold. Before shipping, re-verify each against
+# `cargo search <crate>` / crates.io and your security policy — lines marked
+# `# verify` are the most likely to have moved.
+
+[workspace]
+resolver = "2"
+members = [
+    "crates/proxy_core",
+    "crates/p2p_engine",
+    "crates/compliance_reporting",
+    "crates/quantum_crypto",
+    "crates/dht_resolver",
+    "crates/incentive_ledger",
+    "src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+rust-version = "1.80"
+authors = ["Turnet Contributors"]
+repository = ""
+
+# Shared dependency set. Individual crates opt in to what they actually use;
+# declaring versions here keeps them aligned across the workspace.
+[workspace.dependencies]
+# --- async runtime & networking ---
+tokio = { version = "1.40", features = ["full"] }          # verify
+hyper = { version = "1.4", features = ["full"] }           # verify
+hyper-util = { version = "0.1", features = ["full"] }      # verify
+
+# --- peer-to-peer / DHT ---
+libp2p = { version = "0.54", features = [                  # verify (feature set)
+    "tokio", "tcp", "noise", "yamux", "kad", "identify", "ping", "macros",
+] }
+
+# --- cryptography ---
+chacha20poly1305 = "0.10"
+rand = "0.8"
+rand_core = "0.6"
+zeroize = { version = "1.8", features = ["derive"] }
+sha2 = "0.10"
+ed25519-dalek = { version = "2.1", features = ["rand_core"] }   # genesis/signing keys
+
+# --- storage ---
+rusqlite = { version = "0.32", features = ["bundled"] }    # verify; bundled => no system sqlite needed
+
+# --- serialization ---
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+csv = "1.3"
+
+# --- observability & errors ---
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1.0"
+thiserror = "2.0"                                          # verify
+
+# --- time & ids ---
+time = { version = "0.3", features = ["formatting", "macros"] }
+
+# --- internal crates ---
+proxy_core = { path = "crates/proxy_core" }
+p2p_engine = { path = "crates/p2p_engine" }
+compliance_reporting = { path = "crates/compliance_reporting" }
+quantum_crypto = { path = "crates/quantum_crypto" }
+dht_resolver = { path = "crates/dht_resolver" }
+incentive_ledger = { path = "crates/incentive_ledger" }
+
+# A century-long codebase values small, auditable binaries. Tune per release.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true

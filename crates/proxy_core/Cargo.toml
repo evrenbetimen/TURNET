@@ -1,0 +1,15 @@
+[package]
+name = "proxy_core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+tokio = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+dht_resolver = { workspace = true }

@@ -1,0 +1,36 @@
+[package]
+name = "turnet-console"
+description = "Turnet management console — Tauri v2 backend"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+# Tauri v2 splits the app into a library (shared by desktop and mobile) and a
+# thin binary entry point.
+[lib]
+name = "turnet_console_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[[bin]]
+name = "turnet-console"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2.0", features = [] }   # verify
+
+[dependencies]
+tauri = { version = "2.0", features = [] }          # verify
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Core daemon crates driven by the console.
+proxy_core = { workspace = true }
+p2p_engine = { workspace = true }
+compliance_reporting = { workspace = true }
+quantum_crypto = { workspace = true }
+dht_resolver = { workspace = true }
+incentive_ledger = { workspace = true }

@@ -1,0 +1,16 @@
+[package]
+name = "p2p_engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+tokio = { workspace = true }
+libp2p = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+quantum_crypto = { workspace = true }
+dht_resolver = { workspace = true }
+compliance_reporting = { workspace = true }
