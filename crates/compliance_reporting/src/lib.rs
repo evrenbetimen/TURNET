@@ -55,6 +55,8 @@ pub enum ComplianceError {
     Storage(String),
     #[error("export error: {0}")]
     Export(String),
+    #[error("invalid node state transition: {0}")]
+    InvalidTransition(&'static str),
 }
 
 /// One first-party connection record held by a node operator.

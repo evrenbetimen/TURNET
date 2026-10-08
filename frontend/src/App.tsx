@@ -3,7 +3,9 @@ import Panel from "./components/Panel";
 import {
   api,
   onTelemetry,
+  type AuditPolicy,
   type ExportSummary,
+  type NodeRunState,
   type ProxyStatus,
   type RouteResult,
   type TelemetrySnapshot,
@@ -38,9 +40,16 @@ export default function App() {
   const [route, setRoute] = useState<RouteResult | null>(null);
   const [host, setHost] = useState("myhandle.tur");
   const [exportSummary, setExportSummary] = useState<ExportSummary | null>(null);
+  const [nodeState, setNodeState] = useState<NodeRunState>("running");
+  const [audit, setAudit] = useState<AuditPolicy | null>(null);
+  const [disclosure, setDisclosure] = useState(
+    "Connection records retained by this node operator; disclosed to users.",
+  );
 
   useEffect(() => {
     void safe(api.getProxyStatus(), setProxy);
+    void safe(api.getNodeState(), (r) => setNodeState(r.state));
+    void safe(api.getAuditPolicy(), setAudit);
     const unlisten = onTelemetry(setTelemetry);
     return () => {
       void unlisten.then((fn) => fn());
@@ -135,6 +144,67 @@ export default function App() {
           </div>
         </Panel>
 
+        {/* Node control */}
+        <Panel title="Node Control" subtitle="Local — this node only">
+          <div className="space-y-3 text-sm">
+            <Row label="State" value={nodeState} />
+            <div className="flex gap-2">
+              {(["pause", "resume", "stop"] as const).map((action) => (
+                <button
+                  key={action}
+                  className="rounded bg-turnet-accent px-3 py-1 text-xs font-medium text-white hover:bg-turnet-accent2 disabled:opacity-40"
+                  disabled={nodeState === "stopped"}
+                  onClick={() =>
+                    void safe(api.setNodeState(action), (r) => setNodeState(r.state))
+                  }
+                >
+                  {action}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-turnet-muted">
+              Pauses/stops this operator&apos;s own node. There is no
+              network-wide freeze.
+            </p>
+          </div>
+        </Panel>
+
+        {/* Audit logging */}
+        <Panel title="Audit Logging" subtitle="Off by default, disclosure-gated">
+          <div className="space-y-3 text-sm">
+            <Row
+              label="Recording"
+              value={audit?.recording ? "on" : "off"}
+            />
+            <textarea
+              className="h-16 w-full rounded bg-black/30 px-2 py-1 text-xs text-turnet-text outline-none"
+              value={disclosure}
+              onChange={(e) => setDisclosure(e.target.value)}
+              placeholder="Disclosure statement shown to users (required to enable)"
+            />
+            <div className="flex gap-2">
+              <button
+                className="rounded bg-turnet-accent px-3 py-1 text-xs font-medium text-white hover:bg-turnet-accent2"
+                onClick={() =>
+                  void safe(api.setAuditPolicy(true, disclosure), setAudit)
+                }
+              >
+                Enable
+              </button>
+              <button
+                className="rounded bg-black/40 px-3 py-1 text-xs font-medium text-turnet-text hover:bg-black/60"
+                onClick={() => void safe(api.setAuditPolicy(false, null), setAudit)}
+              >
+                Disable
+              </button>
+            </div>
+            <p className="text-xs text-turnet-muted">
+              Enabling requires a disclosure statement — silent logging cannot
+              be turned on.
+            </p>
+          </div>
+        </Panel>
+
         {/* Regulatory export */}
         <Panel
           title="Regulatory Export"
@@ -169,6 +239,11 @@ export default function App() {
                 <Row label="format" value={exportSummary.format} />
                 <Row label="records" value={String(exportSummary.record_count)} />
                 <Row label="sig" value={`${exportSummary.signature_prefix}…`} />
+                <Row
+                  label="verified"
+                  value={exportSummary.verified ? "yes" : "no"}
+                />
+                <Row label="path" value={exportSummary.output_path} />
               </div>
             ) : null}
           </div>

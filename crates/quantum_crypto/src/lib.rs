@@ -40,6 +40,12 @@ pub enum CryptoError {
     /// Key material was the wrong length or shape.
     #[error("invalid key material")]
     InvalidKey,
+    /// A record exceeded the configured maximum padded size.
+    #[error("record too large to pad")]
+    TooLarge,
+    /// A padded record was malformed (bad length header).
+    #[error("malformed padded record")]
+    MalformedPadded,
 }
 
 /// AEAD record layer: ChaCha20-Poly1305 over the wire.
@@ -131,23 +137,75 @@ pub mod hybrid {
     }
 }
 
-/// Transport shaping to resist passive traffic analysis. **Stub.**
+/// Transport shaping to resist passive traffic analysis.
 ///
-/// Legitimate censorship-circumvention tools pad and re-time records so a
-/// passive observer cannot fingerprint the protocol. This module is a
-/// documented placeholder: the padding policy, its parameters, and the
-/// trade-off against bandwidth are design decisions deferred to a later
-/// milestone. Nothing here evades inspection today.
+/// Padding record plaintext up to fixed size buckets means a passive observer
+/// (including the user's own ISP) learns far less from packet sizes about what
+/// a user is doing. This is a **user-privacy** measure — uniform record sizes
+/// — not a tool for hiding the protocol's existence or defeating lawful
+/// inspection.
+///
+/// The wire format is a 4-byte little-endian original-length header followed
+/// by the plaintext and zero padding, the whole rounded up to a multiple of
+/// `bucket`. [`PaddingPolicy::unpad`] recovers the exact original bytes.
 pub mod transport {
     use super::CryptoError;
 
-    /// A record-padding policy.
-    pub struct PaddingPolicy;
+    /// 4-byte length header prepended before padding.
+    const HEADER: usize = 4;
+
+    /// A record-padding policy: round every record up to a multiple of
+    /// `bucket` bytes, refusing anything whose padded size would exceed `max`.
+    #[derive(Debug, Clone, Copy)]
+    pub struct PaddingPolicy {
+        /// Bucket granularity in bytes (records are rounded up to a multiple).
+        pub bucket: usize,
+        /// Maximum padded record size in bytes.
+        pub max: usize,
+    }
+
+    impl Default for PaddingPolicy {
+        fn default() -> Self {
+            Self { bucket: 256, max: 65535 }
+        }
+    }
 
     impl PaddingPolicy {
-        /// Return the padded length a record should be grown to. Stub.
-        pub fn padded_len(&self, _actual: usize) -> Result<usize, CryptoError> {
-            Err(CryptoError::NotImplemented("transport padding policy"))
+        /// Compute the on-wire padded length for a plaintext of `actual` bytes
+        /// (including the 4-byte length header).
+        pub fn padded_len(&self, actual: usize) -> Result<usize, CryptoError> {
+            let bucket = self.bucket.max(1);
+            let needed = actual
+                .checked_add(HEADER)
+                .ok_or(CryptoError::TooLarge)?;
+            let padded = needed.div_ceil(bucket) * bucket;
+            if padded > self.max {
+                return Err(CryptoError::TooLarge);
+            }
+            Ok(padded)
+        }
+
+        /// Pad `data` to the next bucket boundary, embedding its true length.
+        pub fn pad(&self, data: &[u8]) -> Result<Vec<u8>, CryptoError> {
+            let target = self.padded_len(data.len())?;
+            let mut out = Vec::with_capacity(target);
+            out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+            out.extend_from_slice(data);
+            out.resize(target, 0);
+            Ok(out)
+        }
+
+        /// Recover the original bytes from a padded record.
+        pub fn unpad(&self, padded: &[u8]) -> Result<Vec<u8>, CryptoError> {
+            if padded.len() < HEADER {
+                return Err(CryptoError::MalformedPadded);
+            }
+            let len = u32::from_le_bytes([padded[0], padded[1], padded[2], padded[3]]) as usize;
+            let end = HEADER.checked_add(len).ok_or(CryptoError::MalformedPadded)?;
+            if end > padded.len() {
+                return Err(CryptoError::MalformedPadded);
+            }
+            Ok(padded[HEADER..end].to_vec())
         }
     }
 }
@@ -176,5 +234,26 @@ mod tests {
     #[test]
     fn kem_is_stubbed() {
         assert!(kem::generate_keypair().is_err());
+    }
+
+    #[test]
+    fn padding_rounds_to_bucket_and_round_trips() {
+        let p = transport::PaddingPolicy { bucket: 256, max: 65535 };
+        let data = b"a short message";
+        let padded = p.pad(data).unwrap();
+        assert_eq!(padded.len(), 256); // 4 + 15 -> rounded up to 256
+        assert_eq!(p.unpad(&padded).unwrap(), data);
+    }
+
+    #[test]
+    fn padding_rejects_oversize() {
+        let p = transport::PaddingPolicy { bucket: 256, max: 512 };
+        assert!(p.pad(&vec![0u8; 600]).is_err());
+    }
+
+    #[test]
+    fn unpad_rejects_malformed() {
+        let p = transport::PaddingPolicy::default();
+        assert!(p.unpad(&[1, 2]).is_err()); // shorter than header
     }
 }

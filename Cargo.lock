@@ -590,6 +590,7 @@ version = "0.1.0"
 dependencies = [
  "csv",
  "ed25519-dalek",
+ "rand 0.8.8",
  "rusqlite",
  "serde",
  "serde_json",
