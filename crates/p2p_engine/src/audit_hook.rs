@@ -102,7 +102,10 @@ mod tests {
 
     #[test]
     fn enabled_without_disclosure_records_nothing() {
-        let p = AuditPolicy { enabled: true, operator_disclosure: None };
+        let p = AuditPolicy {
+            enabled: true,
+            operator_disclosure: None,
+        };
         assert!(p.record_for(&conn()).is_none());
     }
 

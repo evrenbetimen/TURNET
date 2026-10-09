@@ -84,9 +84,21 @@ pub mod anycast {
 
     /// Pick a replica for a name given a set of healthy candidates.
     ///
-    /// Stub: selection policy (latency, load, hash-ring) is a later milestone.
-    pub fn select(_candidates: &[NodeId]) -> Result<NodeId, DhtError> {
-        Err(DhtError::NotImplemented("anycast selection"))
+    /// The policy here is deliberately simple and **deterministic**: the
+    /// numerically smallest [`NodeId`] wins. A deterministic choice means every
+    /// resolver that sees the same healthy set routes a given name to the same
+    /// replica, which keeps a name's traffic affine to one mirror without any
+    /// coordination. Latency-, load-, and hash-ring-aware selection (so that
+    /// different names spread across mirrors) is a later milestone that will
+    /// take richer per-candidate inputs than this signature carries.
+    ///
+    /// Returns [`DhtError::NotFound`] when there are no candidates.
+    pub fn select(candidates: &[NodeId]) -> Result<NodeId, DhtError> {
+        candidates
+            .iter()
+            .copied()
+            .min_by_key(|n| n.0)
+            .ok_or(DhtError::NotFound)
     }
 }
 
@@ -125,12 +137,31 @@ mod tests {
 
     #[test]
     fn normalize_accepts_turnet_names() {
-        assert_eq!(normalize_name("Shop.Example.TUR.").unwrap(), "shop.example.tur");
+        assert_eq!(
+            normalize_name("Shop.Example.TUR.").unwrap(),
+            "shop.example.tur"
+        );
     }
 
     #[test]
     fn normalize_rejects_clear_web() {
         assert!(normalize_name("example.com").is_err());
         assert!(normalize_name("").is_err());
+    }
+
+    #[test]
+    fn anycast_empty_is_not_found() {
+        assert!(matches!(anycast::select(&[]), Err(DhtError::NotFound)));
+    }
+
+    #[test]
+    fn anycast_is_deterministic_and_order_independent() {
+        let a = NodeId(0x30);
+        let b = NodeId(0x10);
+        let c = NodeId(0x20);
+        // Smallest NodeId wins regardless of input ordering.
+        assert_eq!(anycast::select(&[a, b, c]).unwrap(), b);
+        assert_eq!(anycast::select(&[c, a, b]).unwrap(), b);
+        assert_eq!(anycast::select(&[b]).unwrap(), b);
     }
 }

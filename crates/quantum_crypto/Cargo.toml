@@ -13,3 +13,9 @@ zeroize = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+
+# Post-quantum KEM: RustCrypto's FIPS-203 ML-KEM. Pinned exactly; a crypto
+# primitive is upgraded deliberately, with review, never by a float. The
+# `getrandom` feature lets keypair generation and encapsulation draw from the
+# system CSPRNG directly, so no extra RNG wiring is needed here.
+ml-kem = { version = "=0.3.2", features = ["getrandom"] }

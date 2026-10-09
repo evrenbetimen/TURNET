@@ -9,17 +9,17 @@
 //!
 //! ## Layout
 //! - [`aead`]    — ChaCha20-Poly1305 record encryption (the working primitive).
-//! - [`kem`]     — ML-KEM / Kyber key encapsulation. **Stub only** — see below.
+//! - [`kem`]     — ML-KEM-768 key encapsulation (FIPS 203), via RustCrypto.
 //! - [`hybrid`]  — combines a PQ-derived secret with the AEAD into one pipeline.
-//! - [`transport`] — transport-fingerprint shaping (padding/timing). **Stub.**
+//! - [`transport`] — record padding to coarse size buckets.
 //!
 //! ## Status of the post-quantum half
-//! [`kem`] is a documented placeholder. Wiring a real NIST ML-KEM (FIPS 203)
-//! implementation is a deliberate, security-sensitive decision left to a
-//! later milestone: the chosen crate must be audited, constant-time, and
-//! pinned. Until then every `kem` entry point returns
-//! [`CryptoError::NotImplemented`] rather than a weak placeholder, so there is
-//! no risk of shipping a cipher that merely *looks* post-quantum.
+//! [`kem`] is backed by RustCrypto's `ml-kem` crate (ML-KEM-768, FIPS 203),
+//! pinned to an exact version — a cryptographic primitive is upgraded
+//! deliberately, with review, never by a floating version. What remains for a
+//! later milestone is wiring this KEM into the live [`p2p_engine`] UDP
+//! handshake (nonce schedule, peer authentication, rekeying); the primitive
+//! and its combiner with the classical secret are implemented and tested here.
 
 #![forbid(unsafe_code)]
 
@@ -83,33 +83,68 @@ pub mod aead {
     }
 }
 
-/// Post-quantum key encapsulation (ML-KEM / Kyber). **Stub.**
+/// Post-quantum key encapsulation (ML-KEM-768, FIPS 203).
+///
+/// Backed by RustCrypto's `ml-kem` crate. ML-KEM-768 is the NIST "Category 3"
+/// parameter set — the common default for general-purpose confidentiality.
+/// Keys and ciphertexts cross this API as opaque byte vectors (their FIPS-203
+/// encodings), so callers never handle the crate's internal key types:
+///
+/// - an encapsulation (public) key serializes to 1184 bytes,
+/// - a decapsulation (private) key is carried as its 64-byte seed,
+/// - a ciphertext ("encapsulated key") is 1088 bytes,
+/// - the shared secret is 32 bytes.
+///
+/// The shared secret produced here feeds [`super::hybrid::combine`] as the
+/// post-quantum half of the session key, so a break of the classical half
+/// alone does not reveal the record key.
 pub mod kem {
     use super::CryptoError;
+    use ml_kem::array::Array;
+    use ml_kem::{
+        Decapsulate, DecapsulationKey768, Encapsulate, EncapsulationKey768, Kem, KeyExport,
+        KeyInit, MlKem768, Seed,
+    };
 
-    /// A PQ public encapsulation key. Opaque placeholder.
+    /// An ML-KEM-768 encapsulation (public) key, in its FIPS-203 byte encoding.
     pub struct EncapsulationKey(pub Vec<u8>);
-    /// A PQ secret decapsulation key. Opaque placeholder.
+    /// An ML-KEM-768 decapsulation (private) key, carried as its 64-byte seed.
     pub struct DecapsulationKey(pub Vec<u8>);
     /// A ciphertext carrying an encapsulated shared secret.
     pub struct Encapsulated(pub Vec<u8>);
 
-    /// Generate an ML-KEM keypair.
+    fn shared_to_array(ss: &[u8]) -> Result<[u8; 32], CryptoError> {
+        ss.try_into().map_err(|_| CryptoError::InvalidKey)
+    }
+
+    /// Generate a fresh ML-KEM-768 keypair using the system CSPRNG.
     ///
-    /// Stub: integrating an audited FIPS-203 implementation is a later
-    /// milestone. Returns [`CryptoError::NotImplemented`].
+    /// Returns the public encapsulation key and the private decapsulation key
+    /// (as its seed), both as byte vectors.
     pub fn generate_keypair() -> Result<(EncapsulationKey, DecapsulationKey), CryptoError> {
-        Err(CryptoError::NotImplemented("ml-kem keygen"))
+        let (dk, ek) = MlKem768::generate_keypair();
+        Ok((
+            EncapsulationKey(ek.to_bytes().to_vec()),
+            DecapsulationKey(dk.to_bytes().to_vec()),
+        ))
     }
 
-    /// Encapsulate a fresh shared secret to a public key.
-    pub fn encapsulate(_ek: &EncapsulationKey) -> Result<(Encapsulated, [u8; 32]), CryptoError> {
-        Err(CryptoError::NotImplemented("ml-kem encapsulate"))
+    /// Encapsulate a fresh shared secret to a public key, returning the
+    /// ciphertext to send to the key's owner and the 32-byte shared secret.
+    pub fn encapsulate(ek: &EncapsulationKey) -> Result<(Encapsulated, [u8; 32]), CryptoError> {
+        let encoded = Array::try_from(ek.0.as_slice()).map_err(|_| CryptoError::InvalidKey)?;
+        let ek = EncapsulationKey768::new(&encoded).map_err(|_| CryptoError::InvalidKey)?;
+        let (ct, ss) = ek.encapsulate();
+        Ok((Encapsulated(ct.to_vec()), shared_to_array(&ss)?))
     }
 
-    /// Recover the shared secret from a ciphertext.
-    pub fn decapsulate(_dk: &DecapsulationKey, _ct: &Encapsulated) -> Result<[u8; 32], CryptoError> {
-        Err(CryptoError::NotImplemented("ml-kem decapsulate"))
+    /// Recover the shared secret from a ciphertext using the decapsulation key.
+    pub fn decapsulate(dk: &DecapsulationKey, ct: &Encapsulated) -> Result<[u8; 32], CryptoError> {
+        let seed: Seed = Array::try_from(dk.0.as_slice()).map_err(|_| CryptoError::InvalidKey)?;
+        let dk = DecapsulationKey768::new(&seed);
+        let ct = Array::try_from(ct.0.as_slice()).map_err(|_| CryptoError::InvalidKey)?;
+        let ss = dk.decapsulate(&ct);
+        shared_to_array(&ss)
     }
 }
 
@@ -122,8 +157,7 @@ pub mod hybrid {
     /// post-quantum KEM secret via a hash-based combiner. Either input alone
     /// being compromised must not reveal the output.
     ///
-    /// The combiner itself is implemented; its PQ input comes from
-    /// [`super::kem`], which is still a stub.
+    /// The combiner's PQ input comes from [`super::kem`] (ML-KEM-768).
     pub fn combine(classical: &[u8], pq: &[u8]) -> Result<[u8; KEY_LEN], CryptoError> {
         if classical.is_empty() || pq.is_empty() {
             return Err(CryptoError::InvalidKey);
@@ -166,7 +200,10 @@ pub mod transport {
 
     impl Default for PaddingPolicy {
         fn default() -> Self {
-            Self { bucket: 256, max: 65535 }
+            Self {
+                bucket: 256,
+                max: 65535,
+            }
         }
     }
 
@@ -175,9 +212,7 @@ pub mod transport {
         /// (including the 4-byte length header).
         pub fn padded_len(&self, actual: usize) -> Result<usize, CryptoError> {
             let bucket = self.bucket.max(1);
-            let needed = actual
-                .checked_add(HEADER)
-                .ok_or(CryptoError::TooLarge)?;
+            let needed = actual.checked_add(HEADER).ok_or(CryptoError::TooLarge)?;
             let padded = needed.div_ceil(bucket) * bucket;
             if padded > self.max {
                 return Err(CryptoError::TooLarge);
@@ -201,7 +236,9 @@ pub mod transport {
                 return Err(CryptoError::MalformedPadded);
             }
             let len = u32::from_le_bytes([padded[0], padded[1], padded[2], padded[3]]) as usize;
-            let end = HEADER.checked_add(len).ok_or(CryptoError::MalformedPadded)?;
+            let end = HEADER
+                .checked_add(len)
+                .ok_or(CryptoError::MalformedPadded)?;
             if end > padded.len() {
                 return Err(CryptoError::MalformedPadded);
             }
@@ -232,13 +269,47 @@ mod tests {
     }
 
     #[test]
-    fn kem_is_stubbed() {
-        assert!(kem::generate_keypair().is_err());
+    fn kem_round_trips() {
+        // Encapsulation against a freshly generated key yields the same shared
+        // secret on both sides.
+        let (ek, dk) = kem::generate_keypair().unwrap();
+        let (ct, ss_sender) = kem::encapsulate(&ek).unwrap();
+        let ss_receiver = kem::decapsulate(&dk, &ct).unwrap();
+        assert_eq!(ss_sender, ss_receiver);
+    }
+
+    #[test]
+    fn kem_encodings_have_expected_sizes() {
+        // FIPS-203 ML-KEM-768 fixed sizes: ek 1184, seed 64, ciphertext 1088.
+        let (ek, dk) = kem::generate_keypair().unwrap();
+        assert_eq!(ek.0.len(), 1184);
+        assert_eq!(dk.0.len(), 64);
+        let (ct, _) = kem::encapsulate(&ek).unwrap();
+        assert_eq!(ct.0.len(), 1088);
+    }
+
+    #[test]
+    fn kem_rejects_malformed_key() {
+        assert!(kem::encapsulate(&kem::EncapsulationKey(vec![0u8; 3])).is_err());
+    }
+
+    #[test]
+    fn kem_feeds_hybrid_combiner() {
+        // The PQ shared secret is a valid input to the hybrid key schedule.
+        let (ek, dk) = kem::generate_keypair().unwrap();
+        let (ct, ss_a) = kem::encapsulate(&ek).unwrap();
+        let ss_b = kem::decapsulate(&dk, &ct).unwrap();
+        let k_a = hybrid::combine(b"classical-ecdh-secret", &ss_a).unwrap();
+        let k_b = hybrid::combine(b"classical-ecdh-secret", &ss_b).unwrap();
+        assert_eq!(k_a, k_b);
     }
 
     #[test]
     fn padding_rounds_to_bucket_and_round_trips() {
-        let p = transport::PaddingPolicy { bucket: 256, max: 65535 };
+        let p = transport::PaddingPolicy {
+            bucket: 256,
+            max: 65535,
+        };
         let data = b"a short message";
         let padded = p.pad(data).unwrap();
         assert_eq!(padded.len(), 256); // 4 + 15 -> rounded up to 256
@@ -247,7 +318,10 @@ mod tests {
 
     #[test]
     fn padding_rejects_oversize() {
-        let p = transport::PaddingPolicy { bucket: 256, max: 512 };
+        let p = transport::PaddingPolicy {
+            bucket: 256,
+            max: 512,
+        };
         assert!(p.pad(&vec![0u8; 600]).is_err());
     }
 

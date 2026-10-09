@@ -41,7 +41,9 @@ pub struct LocalNodeControl {
 
 impl Default for LocalNodeControl {
     fn default() -> Self {
-        Self { state: NodeState::Running }
+        Self {
+            state: NodeState::Running,
+        }
     }
 }
 
@@ -59,7 +61,9 @@ impl LocalNodeControl {
                 self.state = NodeState::Paused;
                 Ok(self.state)
             }
-            NodeState::Stopped => Err(ComplianceError::InvalidTransition("cannot pause a stopped node")),
+            NodeState::Stopped => Err(ComplianceError::InvalidTransition(
+                "cannot pause a stopped node",
+            )),
         }
     }
 
@@ -70,7 +74,9 @@ impl LocalNodeControl {
                 self.state = NodeState::Running;
                 Ok(self.state)
             }
-            NodeState::Stopped => Err(ComplianceError::InvalidTransition("cannot resume a stopped node")),
+            NodeState::Stopped => Err(ComplianceError::InvalidTransition(
+                "cannot resume a stopped node",
+            )),
         }
     }
 

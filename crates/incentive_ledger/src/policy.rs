@@ -15,7 +15,9 @@ pub struct RatePolicy {
 
 impl Default for RatePolicy {
     fn default() -> Self {
-        Self { credits_per_unit: 1 }
+        Self {
+            credits_per_unit: 1,
+        }
     }
 }
 

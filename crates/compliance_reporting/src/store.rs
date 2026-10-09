@@ -57,7 +57,9 @@ impl AuditStore {
     pub fn count(&self) -> Result<u64, ComplianceError> {
         let n: i64 = self
             .conn
-            .query_row("SELECT COUNT(*) FROM connection_records", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM connection_records", [], |row| {
+                row.get(0)
+            })
             .map_err(|e| ComplianceError::Storage(e.to_string()))?;
         Ok(n as u64)
     }

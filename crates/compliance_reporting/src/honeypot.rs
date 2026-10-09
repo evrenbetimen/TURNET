@@ -33,7 +33,10 @@ pub struct Honeypot {
 impl Honeypot {
     /// Create a sensor that flags a source after `threshold` probes.
     pub fn new(threshold: u32) -> Self {
-        Self { threshold: threshold.max(1), seen: HashMap::new() }
+        Self {
+            threshold: threshold.max(1),
+            seen: HashMap::new(),
+        }
     }
 
     /// Record one probe from `source`. Returns a flag the first time (and only
