@@ -99,8 +99,14 @@ pub fn write_to_dir(
 
 fn to_csv(records: &[ConnectionRecord]) -> Result<Vec<u8>, ComplianceError> {
     let mut wtr = csv::Writer::from_writer(Vec::new());
-    wtr.write_record(["node_id_hex", "observed_addr", "ts_unix_micros", "bytes", "session_key_id"])
-        .map_err(|e| ComplianceError::Export(e.to_string()))?;
+    wtr.write_record([
+        "node_id_hex",
+        "observed_addr",
+        "ts_unix_micros",
+        "bytes",
+        "session_key_id",
+    ])
+    .map_err(|e| ComplianceError::Export(e.to_string()))?;
     for r in records {
         wtr.write_record([
             r.node_id_hex.as_str(),

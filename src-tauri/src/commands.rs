@@ -92,7 +92,10 @@ pub fn classify_domain(host: String) -> RouteDto {
         Route::ClearWeb => "clear-web",
         Route::Turnet => "turnet",
     };
-    RouteDto { host, route: route.to_string() }
+    RouteDto {
+        host,
+        route: route.to_string(),
+    }
 }
 
 /// Read a node's current credit balance.
@@ -108,7 +111,9 @@ pub fn get_credit_balance(node_id: u64, state: State<'_, AppState>) -> u64 {
 #[tauri::command]
 pub fn get_node_state(state: State<'_, AppState>) -> NodeStateDto {
     let nc = state.node_control.lock().expect("node_control lock");
-    NodeStateDto { state: node_state_str(nc.state()) }
+    NodeStateDto {
+        state: node_state_str(nc.state()),
+    }
 }
 
 /// Pause / resume / stop the local node. `action` is one of
@@ -123,7 +128,9 @@ pub fn set_node_state(action: String, state: State<'_, AppState>) -> Result<Node
         other => return Err(format!("unknown action: {other}")),
     }
     .map_err(|e| e.to_string())?;
-    Ok(NodeStateDto { state: node_state_str(new) })
+    Ok(NodeStateDto {
+        state: node_state_str(new),
+    })
 }
 
 // --- audit policy (operator-local, disclosure-gated) ---

@@ -13,7 +13,7 @@ turnet/
 ├── crates/
 │   ├── proxy_core/            # local SOCKS5/HTTP trap + .tur/.vps/.cpt split router
 │   ├── p2p_engine/            # UDP handshake, relay transport, session telemetry
-│   ├── quantum_crypto/        # ChaCha20-Poly1305 AEAD + hybrid KDF; ML-KEM is a stub
+│   ├── quantum_crypto/        # ChaCha20-Poly1305 AEAD + hybrid KDF + ML-KEM-768 (FIPS 203)
 │   ├── dht_resolver/          # libp2p Kademlia name→NodeID resolver, anycast, claims
 │   ├── incentive_ledger/      # uptime/bandwidth → Network Credits state machine
 │   └── compliance_reporting/  # operator-local audit log + signed exporter
@@ -24,19 +24,22 @@ turnet/
 ## What is implemented vs. stubbed
 
 **Implemented & tested:** the split-router classifier (`classify_host`), the
-ChaCha20-Poly1305 record cipher and hybrid key combiner, privacy record
-padding (bucketed, length-preserving), the credit ledger state machine, the
-SQLite (WAL) audit store with time-range queries, the signed JSON/CSV exporter
-(with signature verification and write-to-disk), the disclosure-gated audit
-record hook, the local node-control state machine, the defensive honeypot
-sensor, and the Tauri command + telemetry-event plumbing (including node
-control, audit-policy, and export commands wired to the UI).
+ChaCha20-Poly1305 record cipher and hybrid key combiner, **ML-KEM-768 key
+encapsulation (FIPS 203, via RustCrypto `ml-kem`)**, privacy record padding
+(bucketed, length-preserving), the credit ledger state machine, the
+**metering unit model** (uptime + bandwidth → billable units), **deterministic
+anycast replica selection**, the SQLite (WAL) audit store with time-range
+queries, the signed JSON/CSV exporter (with signature verification and
+write-to-disk), the disclosure-gated audit record hook, the local node-control
+state machine, the defensive honeypot sensor, and the Tauri command +
+telemetry-event plumbing (including node control, audit-policy, and export
+commands wired to the UI).
 
 **Documented stubs** (return `NotImplemented` / `todo!()` placeholders): the
-proxy accept loop and SOCKS5/HTTP state machines, the UDP hybrid handshake,
-ML-KEM/Kyber key encapsulation, the Kademlia swarm, anycast selection,
-zero-knowledge handle claims, metering ingestion, and network credit
-settlement.
+proxy accept loop and SOCKS5/HTTP state machines, the UDP hybrid handshake
+(which will carry the ML-KEM secret into a live session), the Kademlia swarm
+(resolve/announce), zero-knowledge handle claims, metering ingestion from the
+live relay, and network credit settlement.
 
 ## Design note — `compliance_reporting`
 
