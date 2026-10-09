@@ -10,15 +10,17 @@
 //!   decentralized P2P pipeline. These names are resolved via the in-network
 //!   DHT ([`dht_resolver`]) and must **not** leak to public DNS resolvers.
 //!
-//! This crate contains the listener and the classifier. The actual byte
-//! pumping, SOCKS5 state machine, and HTTP CONNECT handling are stubbed; the
-//! split-router decision logic below is real so the routing contract is
-//! testable from day one.
+//! This crate contains the listener, the protocol sniffer, the split-router
+//! classifier, and the SOCKS5 / HTTP handlers. Clear-web targets are relayed
+//! to the public Internet; Turnet targets are refused with the protocol's own
+//! error until the P2P pipeline ([`dht_resolver`] + relay) is wired, so a
+//! reserved-namespace name is never sent to a public DNS resolver.
 
 #![forbid(unsafe_code)]
 
 use std::net::SocketAddr;
 use thiserror::Error;
+use tokio::net::{TcpListener, TcpStream};
 
 pub mod http;
 pub mod socks5;
@@ -35,6 +37,19 @@ pub enum ProxyError {
     Io(#[from] std::io::Error),
     #[error("malformed request")]
     Malformed,
+    /// The client spoke a protocol version this proxy does not implement.
+    #[error("unsupported protocol version")]
+    UnsupportedVersion,
+    /// A SOCKS command other than CONNECT (e.g. BIND, UDP ASSOCIATE).
+    #[error("unsupported command")]
+    UnsupportedCommand,
+    /// A SOCKS address type this proxy does not handle.
+    #[error("unsupported address type")]
+    UnsupportedAddressType,
+    /// The target routes to the Turnet pipeline, which is not wired yet. The
+    /// name is deliberately not resolved via public DNS.
+    #[error("turnet pipeline not available yet")]
+    TurnetPipelineUnavailable,
 }
 
 /// Where a classified request should go.
@@ -97,14 +112,55 @@ impl ProxyFrontend {
         &self.config
     }
 
-    /// Bind the listener and serve until shutdown.
+    /// Bind the listener and accept connections until the task is dropped.
     ///
-    /// Stub: the accept loop, protocol sniffing (SOCKS5 greeting vs. HTTP
-    /// verb), and per-connection routing via [`classify_host`] land in a
-    /// later milestone.
+    /// Each connection is sniffed (SOCKS5 greeting vs. HTTP verb) and handed to
+    /// the matching handler on its own task. A per-connection error is logged
+    /// and does not bring the listener down.
     pub async fn serve(&self) -> Result<(), ProxyError> {
-        tracing::info!(bind = %self.config.bind, "proxy_core: serve() not yet implemented");
-        Err(ProxyError::NotImplemented("proxy accept loop"))
+        let listener = TcpListener::bind(self.config.bind).await?;
+        tracing::info!(bind = %self.config.bind, "proxy_core: listening");
+        loop {
+            let (stream, peer) = listener.accept().await?;
+            tokio::spawn(async move {
+                if let Err(e) = dispatch(stream).await {
+                    tracing::warn!(?peer, error = %e, "proxy_core: connection ended with error");
+                }
+            });
+        }
+    }
+}
+
+/// Which front-end protocol a connection is speaking.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Protocol {
+    /// A SOCKS5 greeting (first byte `0x05`).
+    Socks5,
+    /// Anything else is treated as HTTP (a printable request-line verb).
+    Http,
+}
+
+/// Decide the protocol from the first byte of the connection. SOCKS5 always
+/// opens with version `0x05`; every HTTP method starts with an uppercase ASCII
+/// letter, so the two never collide.
+pub fn sniff(first_byte: u8) -> Protocol {
+    if first_byte == 0x05 {
+        Protocol::Socks5
+    } else {
+        Protocol::Http
+    }
+}
+
+/// Peek the first byte of `stream` and route it to the right handler.
+async fn dispatch(stream: TcpStream) -> Result<(), ProxyError> {
+    let mut first = [0u8; 1];
+    let n = stream.peek(&mut first).await?;
+    if n == 0 {
+        return Err(ProxyError::Malformed);
+    }
+    match sniff(first[0]) {
+        Protocol::Socks5 => socks5::handle_connection(stream).await,
+        Protocol::Http => http::handle_connection(stream).await,
     }
 }
 
@@ -129,5 +185,12 @@ mod tests {
     #[test]
     fn default_blocks_public_dns() {
         assert!(ProxyConfig::default().block_public_dns_for_turnet);
+    }
+
+    #[test]
+    fn sniff_distinguishes_socks5_from_http() {
+        assert_eq!(sniff(0x05), Protocol::Socks5);
+        assert_eq!(sniff(b'G'), Protocol::Http); // GET
+        assert_eq!(sniff(b'C'), Protocol::Http); // CONNECT
     }
 }
