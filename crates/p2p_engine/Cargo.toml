@@ -14,3 +14,6 @@ tracing = { workspace = true }
 quantum_crypto = { workspace = true }
 dht_resolver = { workspace = true }
 compliance_reporting = { workspace = true }
+# Classical half of the hybrid handshake (X25519 ECDH). The post-quantum half
+# is quantum_crypto::kem (ML-KEM-768).
+x25519-dalek = { version = "2.0", features = ["getrandom"] }
