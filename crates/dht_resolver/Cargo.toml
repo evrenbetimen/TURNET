@@ -12,3 +12,12 @@ serde = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+# Handle-claim verification: X.509 chain parsing + signature verification
+# (`verify` pulls a vetted signature backend) and Ed25519 possession proofs.
+x509-parser = { version = "0.18", features = ["verify"] }
+ring = "0.17"
+
+[dev-dependencies]
+# Test vectors: generate real certificate chains and sign possession proofs.
+rcgen = "0.14"
+rustls-pki-types = "1"
