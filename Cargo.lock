@@ -2347,6 +2347,7 @@ name = "incentive_ledger"
 version = "0.1.0"
 dependencies = [
  "dht_resolver",
+ "ed25519-dalek",
  "serde",
  "thiserror 2.0.21",
  "time",
