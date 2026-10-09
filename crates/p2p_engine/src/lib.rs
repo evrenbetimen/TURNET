@@ -38,6 +38,9 @@ pub enum EngineError {
     NotImplemented(&'static str),
     #[error("handshake rejected")]
     HandshakeRejected,
+    /// A handshake message had the wrong length or shape.
+    #[error("malformed handshake message")]
+    MalformedHandshake,
     #[error("i/o error: {0}")]
     Io(#[from] std::io::Error),
 }
